@@ -133,7 +133,7 @@ const CAJITAS=[
 const CAT_G=['Arriendo','Cuota crédito','Servicios','Mercado','Transporte','Comida fuera','Entretenimiento','Gaming / Steam','Salud','Suscripciones','Abono deuda','Otros'];
 const CAT_I=['Salario','Freelance','Reembolso','Otros'];
 const DEFAULTS={
-  config:{ingresoMensual:8900000,presupuesto:{fijos:3700000,personales:1300000,emergencia:500000,ahorro:3400000}},
+  config:{frecuencia:'quincenal',ingresoPeriodo:4450000,presupuesto:{fijos:1850000,personales:650000,emergencia:250000,ahorro:1700000}},
   cajitas:{fijos:0,personales:0,emergencia:0,ahorro:0},
   movimientos:[],
   deuda:{saldoInicial:8000000,abonos:[],nombre:'Deuda banco'},
@@ -143,6 +143,13 @@ let D;
 try{ D=Object.assign({},DEFAULTS,JSON.parse(localStorage.getItem(KEY)||'{}'));
      D.config=Object.assign({},DEFAULTS.config,D.config); }
 catch(e){ D=JSON.parse(JSON.stringify(DEFAULTS)); }
+// Migración: datos guardados con plan mensual (v3) -> plan quincenal
+if(D.config.ingresoMensual!==undefined){
+  D.config.frecuencia='quincenal';
+  D.config.ingresoPeriodo=Math.round(D.config.ingresoMensual/2);
+  Object.keys(D.config.presupuesto).forEach(k=>D.config.presupuesto[k]=Math.round(D.config.presupuesto[k]/2));
+  delete D.config.ingresoMensual;
+}
 function save(){ localStorage.setItem(KEY,JSON.stringify(D)); }
 
 // ---------------- Utilidades ----------------
@@ -160,6 +167,13 @@ const finput=n=>n?new Intl.NumberFormat('es-CO').format(n):'';
 const esc=s=>String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function montoLive(el){ el.addEventListener('input',()=>{const v=pmonto(el.value);el.value=finput(v);}); }
 function sumarMeses(ym,n){const[y,m]=ym.split('-').map(Number);const d=new Date(y,m-1+n,1);return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');}
+const mult=()=>D.config.frecuencia==='quincenal'?2:1;
+const nomPeriodo=()=>D.config.frecuencia==='quincenal'?'quincena':'mes';
+const quincenaActual=()=>new Date().getDate()<=15?1:2;
+const periodoKey=()=>D.config.frecuencia==='quincenal'?mesAct()+'-Q'+quincenaActual():mesAct();
+const periodoHecho=k=>D.distribuciones.includes(k)||D.distribuciones.includes(mesAct());
+const labelPeriodo=()=>D.config.frecuencia==='quincenal'?('la quincena '+quincenaActual()+' de '+nomMes(mesAct())):('el pago de '+nomMes(mesAct()));
+const labelPeriodoCorto=()=>D.config.frecuencia==='quincenal'?('quincena '+quincenaActual()+' · '+nomMes(mesAct())):nomMes(mesAct());
 
 // ---------------- Navegación ----------------
 const ICONS={
@@ -195,17 +209,17 @@ function vResumen(){
   const ing=mm.filter(m=>m.tipo==='ingreso').reduce((s,m)=>s+m.monto,0);
   const gas=mm.filter(m=>m.tipo==='gasto').reduce((s,m)=>s+m.monto,0);
   const gp=mm.filter(m=>m.tipo==='gasto'&&m.cajita==='personales').reduce((s,m)=>s+m.monto,0);
-  const pp=D.config.presupuesto.personales;
+  const pp=D.config.presupuesto.personales*mult();
   const pctP=pp?gp/pp*100:0;
   const abonado=D.deuda.abonos.reduce((s,a)=>s+a.monto,0);
   const saldoD=Math.max(0,D.deuda.saldoInicial-abonado);
   const pctD=D.deuda.saldoInicial?abonado/D.deuda.saldoInicial*100:0;
   const totCaj=Object.values(D.cajitas).reduce((s,v)=>s+v,0);
-  const dist=D.distribuciones.includes(mes);
+  const pKey=periodoKey();const dist=periodoHecho(pKey);
 
   const tasaAhorro=ing>0?Math.round((ing-gas)/ing*100):null;
-  const colchon=D.config.presupuesto.fijos>0?(D.cajitas.emergencia/D.config.presupuesto.fijos):0;
-  const ritmo=D.config.presupuesto.ahorro||1;
+  const fijosM=D.config.presupuesto.fijos*mult();const colchon=fijosM>0?(D.cajitas.emergencia/fijosM):0;
+  const ritmo=(D.config.presupuesto.ahorro*mult())||1;
   const mesesD=saldoD>0?Math.ceil(saldoD/ritmo):0;
   const mesLibre=saldoD>0?nomMes(sumarMeses(mesAct(),mesesD)):null;
 
@@ -235,13 +249,13 @@ function vResumen(){
   </div>
 
   ${!dist?(!showDist?`<div class="card" style="border-color:var(--border2)"><div class="titlerow" style="margin:0">
-      <div><div class="h">💜 ¿Ya te llegó el pago de ${nomMes(mes)}?</div>
+      <div><div class="h">💜 ¿Ya te llegó ${labelPeriodo()}?</div>
       <div style="font-size:13px;color:var(--muted);margin-top:4px">Confirma cuánto recibiste y reparte en las cajitas.</div></div>
-      <button class="btn" onclick="showDist=true;render()">Distribuir el mes</button></div></div>`
-    :`<div class="card" style="border-color:var(--border2)"><div class="h" style="margin-bottom:12px">💜 Distribuir ${nomMes(mes)}</div>
+      <button class="btn" onclick="showDist=true;render()">Distribuir</button></div></div>`
+    :`<div class="card" style="border-color:var(--border2)"><div class="h" style="margin-bottom:12px">💜 Distribuir ${labelPeriodoCorto()}</div>
       <div class="grid g2">
-        <div style="grid-column:1/-1"><label class="lab">¿Cuánto te llegó este mes?</label>
-          <input data-monto id="dist-ing" inputmode="numeric" value="${finput(D.config.ingresoMensual)}" oninput="actualizarDistCheck()"></div>
+        <div style="grid-column:1/-1"><label class="lab">¿Cuánto te llegó?</label>
+          <input data-monto id="dist-ing" inputmode="numeric" value="${finput(D.config.ingresoPeriodo)}" oninput="actualizarDistCheck()"></div>
         ${CAJITAS.map(c=>`<div><label class="lab">${c.emoji} ${c.nombre}</label>
           <input data-monto id="dist-${c.id}" inputmode="numeric" value="${finput(D.config.presupuesto[c.id])}" oninput="actualizarDistCheck()"></div>`).join('')}
       </div>
@@ -304,12 +318,11 @@ function actualizarDistCheck(){
   el.textContent=dif===0?'✅ Cada peso tiene destino. Cuadrado.':dif>0?`Quedan ${fmt(dif)} sin asignar.`:`Asignaste ${fmt(-dif)} de más.`;
 }
 function aplicarDist(){
-  const mes=mesAct();
   const ing=pmonto(document.getElementById('dist-ing').value);
   if(!ing)return;
   CAJITAS.forEach(c=>{D.cajitas[c.id]+=pmonto(document.getElementById('dist-'+c.id).value);});
-  D.movimientos.unshift({id:uid(),fecha:hoy(),tipo:'ingreso',monto:ing,categoria:'Salario',cajita:'',nota:'Salario '+nomMes(mes)});
-  D.distribuciones.push(mes);
+  D.movimientos.unshift({id:uid(),fecha:hoy(),tipo:'ingreso',monto:ing,categoria:'Salario',cajita:'',nota:'Salario '+labelPeriodoCorto()});
+  D.distribuciones.push(periodoKey());
   showDist=false;save();render();
 }
 
@@ -403,7 +416,7 @@ function vCajitas(){
       :`<div style="display:flex;justify-content:space-between;align-items:baseline;margin-top:6px">
           <div class="num" style="font-size:24px;font-weight:800;letter-spacing:-.6px;color:${s<0?'var(--red)':'var(--text)'}">${fmt(s)}</div>
           <button style="background:none;border:none;color:#D8B4FE;font:inherit;font-size:13px;font-weight:700;cursor:pointer" onclick="editCaj='${c.id}';render()">✏️ Ajustar</button></div>`}
-      <div style="font-size:12px;color:var(--muted2);margin-top:7px">Asignación mensual: <span class="num">${fmt(p[c.id])}</span></div>
+      <div style="font-size:12px;color:var(--muted2);margin-top:7px">Asignación por ${nomPeriodo()}: <span class="num">${fmt(p[c.id])}</span></div>
     </div>`}).join('')}
   </div>
   <div style="height:13px"></div>
@@ -422,7 +435,7 @@ function vDeuda(){
   const abonado=D.deuda.abonos.reduce((s,a)=>s+a.monto,0);
   const saldo=Math.max(0,D.deuda.saldoInicial-abonado);
   const pct=D.deuda.saldoInicial?abonado/D.deuda.saldoInicial*100:0;
-  const ritmo=D.config.presupuesto.ahorro||1;
+  const ritmo=(D.config.presupuesto.ahorro*mult())||1;
   const meses=saldo>0?Math.ceil(saldo/ritmo):0;
   const mesLibre=saldo>0?nomMes(sumarMeses(mesAct(),meses)):null;
   return `
@@ -443,7 +456,7 @@ function vDeuda(){
 
   ${saldo>0?`<div class="card"><div class="h" style="margin-bottom:12px">💸 Registrar abono</div>
     <div class="grid g2">
-      <div><label class="lab">Monto del abono</label><input data-monto id="a-monto" inputmode="numeric" placeholder="$3.400.000"></div>
+      <div><label class="lab">Monto del abono</label><input data-monto id="a-monto" inputmode="numeric" placeholder="$1.700.000"></div>
       <div><label class="lab">Fecha</label><input type="date" id="a-fecha" value="${hoy()}"></div>
       <div style="grid-column:1/-1"><label class="lab">Nota (opcional)</label><input id="a-nota" placeholder="Ej: abono junio, acuerdo de pago"></div>
     </div>
@@ -481,11 +494,16 @@ let editPlan=false;
 function vAjustes(){
   const p=D.config.presupuesto;
   return `
-  <div class="card"><div class="titlerow"><div class="h">⚙️ Plan mensual</div>
+  <div class="card"><div class="titlerow"><div class="h">⚙️ Plan ${D.config.frecuencia==='quincenal'?'quincenal':'mensual'}</div>
     ${!editPlan?`<button class="btn soft sm" onclick="editPlan=true;render()">✏️ Editar plan</button>`:''}</div>
     ${editPlan?`
       <div class="grid g2" style="margin-top:6px">
-        <div><label class="lab">Ingreso mensual esperado (neto)</label><input data-monto id="p-ing" inputmode="numeric" value="${finput(D.config.ingresoMensual)}" oninput="planCheck()"></div>
+        <div style="grid-column:1/-1"><label class="lab">¿Cada cuánto te pagan?</label>
+          <select id="p-frec" onchange="convertirFrec(this.value)">
+            <option value="quincenal" ${D.config.frecuencia==='quincenal'?'selected':''}>Quincenal (dos pagos al mes)</option>
+            <option value="mensual" ${D.config.frecuencia==='mensual'?'selected':''}>Mensual (un pago al mes)</option>
+          </select></div>
+        <div><label class="lab">Ingreso esperado por pago (neto)</label><input data-monto id="p-ing" inputmode="numeric" value="${finput(D.config.ingresoPeriodo)}" oninput="planCheck()"></div>
         ${CAJITAS.map(c=>`<div><label class="lab">${c.emoji} ${c.nombre}</label><input data-monto id="p-${c.id}" inputmode="numeric" value="${finput(p[c.id])}" oninput="planCheck()"></div>`).join('')}
       </div>
       <div id="plan-check" style="margin-top:12px;font-size:14px;font-weight:700;color:var(--muted)"></div>
@@ -493,10 +511,11 @@ function vAjustes(){
         <button class="btn" onclick="savePlan()">✓ Guardar plan</button>
         <button class="btn soft" onclick="editPlan=false;render()">Cancelar</button></div>`
     :`<div style="font-size:14.5px;line-height:2.1">
-        <div style="display:flex;justify-content:space-between"><span style="color:var(--muted)">Ingreso esperado</span><b class="num">${fmt(D.config.ingresoMensual)}</b></div>
+        <div style="display:flex;justify-content:space-between"><span style="color:var(--muted)">Ingreso por ${nomPeriodo()}</span><b class="num">${fmt(D.config.ingresoPeriodo)}</b></div>
+        <div style="display:flex;justify-content:space-between"><span style="color:var(--muted)">Equivalente mensual</span><b class="num">${fmt(D.config.ingresoPeriodo*mult())}</b></div>
         ${CAJITAS.map(c=>`<div style="display:flex;justify-content:space-between"><span style="color:var(--muted)">${c.emoji} ${c.nombre}</span><b class="num">${fmt(p[c.id])}</b></div>`).join('')}
       </div>
-      <div style="font-size:13px;color:var(--muted2);margin-top:10px;line-height:1.6">El ingreso esperado es solo la sugerencia inicial al distribuir cada mes — siempre confirmas el monto real recibido.</div>`}
+      <div style="font-size:13px;color:var(--muted2);margin-top:10px;line-height:1.6">Los montos del plan son por ${nomPeriodo()}: es la sugerencia inicial al distribuir cada pago — siempre confirmas el monto real recibido.</div>`}
   </div>
 
   <div class="card"><div class="h" style="margin-bottom:10px">💾 Respaldo de datos</div>
@@ -523,9 +542,17 @@ function planCheck(){
   el.textContent=dif===0?'✅ Cada peso tiene destino. Plan cuadrado.':dif>0?`Quedan ${fmt(dif)} sin asignar.`:`Te pasaste por ${fmt(-dif)} sobre tu ingreso.`;
 }
 function savePlan(){
-  D.config.ingresoMensual=pmonto(document.getElementById('p-ing').value);
+  D.config.frecuencia=document.getElementById('p-frec').value;
+  D.config.ingresoPeriodo=pmonto(document.getElementById('p-ing').value);
   CAJITAS.forEach(c=>D.config.presupuesto[c.id]=pmonto(document.getElementById('p-'+c.id).value));
   editPlan=false;save();render();
+}
+function convertirFrec(nueva){
+  const f=nueva==='quincenal'?0.5:2; // mensual->quincenal divide, quincenal->mensual multiplica
+  const ing=document.getElementById('p-ing');
+  ing.value=finput(Math.round(pmonto(ing.value)*f));
+  CAJITAS.forEach(c=>{const el=document.getElementById('p-'+c.id);el.value=finput(Math.round(pmonto(el.value)*f));});
+  planCheck();
 }
 function exportar(){
   const blob=new Blob([JSON.stringify(D,null,2)],{type:'application/json'});
