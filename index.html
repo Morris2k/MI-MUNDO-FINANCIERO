@@ -136,7 +136,7 @@ const DEFAULTS={
   config:{frecuencia:'quincenal',ingresoPeriodo:4450000,presupuesto:{fijos:1850000,personales:650000,emergencia:250000,ahorro:1700000}},
   cajitas:{fijos:0,personales:0,emergencia:0,ahorro:0},
   movimientos:[],
-  deuda:{saldoInicial:8000000,abonos:[],nombre:'Deuda banco'},
+  deudas:[{id:'d1',nombre:'Deuda banco',saldoInicial:8000000,cuota:0,abonos:[]},{id:'d2',nombre:'Crédito',saldoInicial:29161876,cuota:719000,abonos:[]}],
   distribuciones:[]
 };
 let D;
@@ -150,6 +150,15 @@ if(D.config.ingresoMensual!==undefined){
   Object.keys(D.config.presupuesto).forEach(k=>D.config.presupuesto[k]=Math.round(D.config.presupuesto[k]/2));
   delete D.config.ingresoMensual;
 }
+// Migración: deuda única (versiones anteriores) -> lista de deudas
+if(D.deuda){
+  const rid=()=> 'd'+Math.random().toString(36).slice(2,8);
+  D.deudas=[{id:rid(),nombre:D.deuda.nombre||'Deuda banco',saldoInicial:D.deuda.saldoInicial||0,cuota:0,
+             abonos:(D.deuda.abonos||[]).map(a=>Object.assign({cajita:'ahorro'},a))}];
+  D.deudas.push({id:rid(),nombre:'Crédito',saldoInicial:29161876,cuota:719000,abonos:[]});
+  delete D.deuda;
+}
+if(!Array.isArray(D.deudas))D.deudas=[];
 function save(){ localStorage.setItem(KEY,JSON.stringify(D)); }
 
 // ---------------- Utilidades ----------------
@@ -211,17 +220,15 @@ function vResumen(){
   const gp=mm.filter(m=>m.tipo==='gasto'&&m.cajita==='personales').reduce((s,m)=>s+m.monto,0);
   const pp=D.config.presupuesto.personales*mult();
   const pctP=pp?gp/pp*100:0;
-  const abonado=D.deuda.abonos.reduce((s,a)=>s+a.monto,0);
-  const saldoD=Math.max(0,D.deuda.saldoInicial-abonado);
-  const pctD=D.deuda.saldoInicial?abonado/D.deuda.saldoInicial*100:0;
+  const totalIniD=D.deudas.reduce((s,d)=>s+d.saldoInicial,0);
+  const abonado=D.deudas.reduce((s,d)=>s+d.abonos.reduce((x,a)=>x+a.monto,0),0);
+  const saldoD=Math.max(0,totalIniD-abonado);
+  const pctD=totalIniD?abonado/totalIniD*100:0;
   const totCaj=Object.values(D.cajitas).reduce((s,v)=>s+v,0);
   const pKey=periodoKey();const dist=periodoHecho(pKey);
 
   const tasaAhorro=ing>0?Math.round((ing-gas)/ing*100):null;
   const fijosM=D.config.presupuesto.fijos*mult();const colchon=fijosM>0?(D.cajitas.emergencia/fijosM):0;
-  const ritmo=(D.config.presupuesto.ahorro*mult())||1;
-  const mesesD=saldoD>0?Math.ceil(saldoD/ritmo):0;
-  const mesLibre=saldoD>0?nomMes(sumarMeses(mesAct(),mesesD)):null;
 
   const meses6=[];for(let i=5;i>=0;i--)meses6.push(sumarMeses(mesAct(),-i));
   const serie=meses6.map(ym=>{
@@ -275,7 +282,7 @@ function vResumen(){
         <div class="d">Meta: 3 meses de gastos fijos</div></div>
       <div class="kpi"><div class="t">Libertad de deuda</div>
         <div class="v num" style="color:${saldoD===0?'var(--green)':'#D8B4FE'}">${saldoD===0?'¡Libre! 🎉':Math.round(pctD)+'%'}</div>
-        <div class="d">${saldoD===0?'Deuda liquidada':'Estimado: '+mesLibre}</div></div>
+        <div class="d">${saldoD===0?'Sin deudas pendientes':D.deudas.length+(D.deudas.length===1?' deuda':' deudas')+' · '+fmtK(saldoD)+' pendiente'}</div></div>
     </div></div>
 
   <div class="card"><div class="h" style="margin-bottom:6px">📈 Tendencia · últimos 6 meses</div>
@@ -297,10 +304,13 @@ function vResumen(){
     <div class="bar"><div style="width:${Math.min(100,pctP)}%;background:${pctP>100?'var(--red)':pctP>80?'var(--amber)':'linear-gradient(90deg,#F472B6,#DB2777)'}"></div></div>
     <div style="font-size:13px;margin-top:8px;color:var(--muted)">${pctP>100?`Te pasaste por ${fmt(gp-pp)}. Mes que viene, ajustamos 💪`:`Te quedan ${fmt(pp-gp)} para gustos este mes.`}</div></div>
 
-  <div class="card" onclick="nav('deuda')" style="cursor:pointer"><div class="titlerow"><div class="h">🏦 ${esc(D.deuda.nombre)}</div>
-    <div class="num" style="font-size:13px;font-weight:700;color:${saldoD===0?'var(--green)':'var(--amber)'}">${saldoD===0?'¡LIQUIDADA! 🎉':'Faltan '+fmt(saldoD)}</div></div>
-    <div class="bar"><div style="width:${pctD}%;background:linear-gradient(90deg,#34D399,#0E9F6E)"></div></div>
-    <div style="font-size:13px;margin-top:8px;color:var(--muted)">Abonado ${fmt(abonado)} de ${fmt(D.deuda.saldoInicial)} (${Math.round(pctD)}%)</div></div>
+  <div class="card" onclick="nav('deuda')" style="cursor:pointer"><div class="titlerow"><div class="h">🏦 Mis deudas</div>
+    <div class="num" style="font-size:13px;font-weight:700;color:${saldoD===0?'var(--green)':'var(--amber)'}">${saldoD===0?'¡AL DÍA! 🎉':'Pendiente '+fmt(saldoD)}</div></div>
+    ${D.deudas.map(d=>{const ab=d.abonos.reduce((s,a)=>s+a.monto,0);const sd=Math.max(0,d.saldoInicial-ab);const pc=d.saldoInicial?ab/d.saldoInicial*100:0;return `
+      <div style="margin-bottom:11px">
+        <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:5px">
+          <span style="font-weight:600">${esc(d.nombre)}</span><span class="num" style="color:${sd===0?'var(--green)':'var(--muted)'}">${sd===0?'✅ Liquidada':fmt(sd)}</span></div>
+        <div class="bar" style="height:7px"><div style="width:${pc}%;background:linear-gradient(90deg,#34D399,#0E9F6E)"></div></div></div>`}).join('')}</div>
 
   ${top.length?`<div class="card"><div class="h" style="margin-bottom:12px">📊 En qué se va la plata este mes</div>
     ${top.map(([c,m])=>`<div style="margin-bottom:11px">
@@ -430,62 +440,126 @@ function saveCaj(id){
 }
 
 // ---------------- Deuda ----------------
-let editSaldo=false;
-function vDeuda(){
-  const abonado=D.deuda.abonos.reduce((s,a)=>s+a.monto,0);
-  const saldo=Math.max(0,D.deuda.saldoInicial-abonado);
-  const pct=D.deuda.saldoInicial?abonado/D.deuda.saldoInicial*100:0;
-  const ritmo=(D.config.presupuesto.ahorro*mult())||1;
+let abonoDeuda=null, editDeuda=null, showNuevaDeuda=false;
+
+function calcDeuda(d){
+  const abonado=d.abonos.reduce((s,a)=>s+a.monto,0);
+  const saldo=Math.max(0,d.saldoInicial-abonado);
+  const pct=d.saldoInicial?abonado/d.saldoInicial*100:0;
+  const ritmo=d.cuota>0?d.cuota:((D.config.presupuesto.ahorro*mult())||1);
   const meses=saldo>0?Math.ceil(saldo/ritmo):0;
-  const mesLibre=saldo>0?nomMes(sumarMeses(mesAct(),meses)):null;
+  return {abonado,saldo,pct,ritmo,meses,mesLibre:saldo>0?nomMes(sumarMeses(mesAct(),meses)):null};
+}
+
+function vDeuda(){
+  const totalIni=D.deudas.reduce((s,d)=>s+d.saldoInicial,0);
+  const totalAb=D.deudas.reduce((s,d)=>s+d.abonos.reduce((x,a)=>x+a.monto,0),0);
+  const totalSaldo=Math.max(0,totalIni-totalAb);
+  const activas=D.deudas.filter(d=>calcDeuda(d).saldo>0).length;
   return `
-  <div class="card" style="${saldo===0?'border-color:rgba(52,211,153,.4)':''}">
-    <div class="titlerow"><div class="h">🏦 ${esc(D.deuda.nombre)}</div>
-      ${!editSaldo?`<button class="btn soft sm" onclick="editSaldo=true;render()">✏️ Ajustar total</button>`:''}</div>
-    ${editSaldo?`<div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-top:8px">
-      <div style="flex:1;min-width:160px"><label class="lab">Total de la deuda (según liquidación del banco)</label>
-      <input data-monto id="d-total" inputmode="numeric" value="${finput(D.deuda.saldoInicial)}"></div>
-      <button class="btn" onclick="D.deuda.saldoInicial=pmonto(document.getElementById('d-total').value);editSaldo=false;save();render()">✓ Guardar</button></div>`:''}
-    <div class="num" style="font-size:36px;font-weight:800;letter-spacing:-1.4px;margin-top:14px;color:${saldo===0?'var(--green)':'var(--text)'}">${saldo===0?'¡Deuda liquidada! 🎉':fmt(saldo)}</div>
-    ${saldo>0?`<div style="font-size:13px;color:var(--muted);margin-top:2px">pendientes de ${fmt(D.deuda.saldoInicial)}</div>`:''}
-    <div style="margin-top:14px"><div class="bar" style="height:13px"><div style="width:${pct}%;background:linear-gradient(90deg,#34D399,#0E9F6E)"></div></div>
-      <div style="display:flex;justify-content:space-between;font-size:13px;color:var(--muted);margin-top:7px">
-        <span>Abonado: <b style="color:var(--green)" class="num">${fmt(abonado)}</b></span><span class="num">${Math.round(pct)}%</span></div></div>
-    ${saldo>0?`<div class="pill">A tu ritmo de ${fmt(ritmo)}/mes, quedas libre aprox. en <b>${mesLibre}</b> (${meses} ${meses===1?'mes':'meses'}). 🔥</div>`:''}
+  <div class="hero" style="padding:20px">
+    <div class="t">Deuda total pendiente</div>
+    <div class="v num" style="font-size:32px">${fmt(totalSaldo)}</div>
+    <div class="mini">
+      <div><span>Deudas activas</span><b class="num">${activas}</b></div>
+      <div><span>Total abonado</span><b class="num">${fmt(totalAb)}</b></div>
+    </div>
   </div>
 
-  ${saldo>0?`<div class="card"><div class="h" style="margin-bottom:12px">💸 Registrar abono</div>
-    <div class="grid g2">
-      <div><label class="lab">Monto del abono</label><input data-monto id="a-monto" inputmode="numeric" placeholder="$1.700.000"></div>
-      <div><label class="lab">Fecha</label><input type="date" id="a-fecha" value="${hoy()}"></div>
-      <div style="grid-column:1/-1"><label class="lab">Nota (opcional)</label><input id="a-nota" placeholder="Ej: abono junio, acuerdo de pago"></div>
-    </div>
-    <button class="btn full" onclick="abonar()">🎯 Abonar a la deuda</button>
-    <div style="font-size:12px;color:var(--muted2);margin-top:9px;text-align:center">El abono se descuenta de la cajita Ahorro/Inversión y queda en tus movimientos.</div>
-  </div>`:''}
-
-  ${D.deuda.abonos.length?`<div class="card"><div class="h" style="margin-bottom:8px">📜 Historial de abonos</div>
-    ${D.deuda.abonos.map(a=>`<div class="row">
+  ${D.deudas.map(d=>{
+    const c=calcDeuda(d);
+    return `
+  <div class="card" style="${c.saldo===0?'border-color:rgba(52,211,153,.4)':''}">
+    <div class="titlerow"><div class="h">🏦 ${esc(d.nombre)}</div>
+      <div style="display:flex;gap:6px">
+        ${editDeuda!==d.id?`<button class="btn soft sm" onclick="editDeuda='${d.id}';abonoDeuda=null;render()">✏️</button>`:''}
+        <button class="btn danger sm" onclick="eliminarDeuda('${d.id}')">🗑️</button>
+      </div></div>
+    ${editDeuda===d.id?`
+      <div class="grid g2" style="margin-top:8px">
+        <div style="grid-column:1/-1"><label class="lab">Nombre</label><input id="ed-nombre-${d.id}" value="${esc(d.nombre)}"></div>
+        <div><label class="lab">Total de la deuda</label><input data-monto id="ed-total-${d.id}" inputmode="numeric" value="${finput(d.saldoInicial)}"></div>
+        <div><label class="lab">Cuota mensual (para proyección)</label><input data-monto id="ed-cuota-${d.id}" inputmode="numeric" value="${finput(d.cuota)}"></div>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:12px">
+        <button class="btn sm" onclick="saveDeuda('${d.id}')">✓ Guardar</button>
+        <button class="btn soft sm" onclick="editDeuda=null;render()">Cancelar</button></div>`:''}
+    <div class="num" style="font-size:30px;font-weight:800;letter-spacing:-1px;margin-top:12px;color:${c.saldo===0?'var(--green)':'var(--text)'}">${c.saldo===0?'¡Liquidada! 🎉':fmt(c.saldo)}</div>
+    ${c.saldo>0?`<div style="font-size:13px;color:var(--muted);margin-top:2px">pendientes de ${fmt(d.saldoInicial)}${d.cuota>0?' · cuota '+fmtK(d.cuota)+'/mes':''}</div>`:''}
+    <div style="margin-top:12px"><div class="bar" style="height:12px"><div style="width:${c.pct}%;background:linear-gradient(90deg,#34D399,#0E9F6E)"></div></div>
+      <div style="display:flex;justify-content:space-between;font-size:13px;color:var(--muted);margin-top:6px">
+        <span>Abonado: <b style="color:var(--green)" class="num">${fmt(c.abonado)}</b></span><span class="num">${Math.round(c.pct)}%</span></div></div>
+    ${c.saldo>0?`<div class="pill">A ${fmt(c.ritmo)}/mes quedas libre aprox. en <b>${c.mesLibre}</b> (${c.meses} ${c.meses===1?'mes':'meses'}).</div>`:''}
+    ${c.saldo>0?(abonoDeuda===d.id?`
+      <div style="margin-top:13px;padding-top:13px;border-top:1px solid rgba(255,255,255,.07)">
+      <div class="grid g2">
+        <div><label class="lab">Monto del abono</label><input data-monto id="ab-monto" inputmode="numeric" placeholder="$719.000"></div>
+        <div><label class="lab">Fecha</label><input type="date" id="ab-fecha" value="${hoy()}"></div>
+        <div><label class="lab">Sale de la cajita</label><select id="ab-caj">${CAJITAS.map(x=>`<option value="${x.id}" ${x.id==='ahorro'?'selected':''}>${x.nombre}</option>`).join('')}</select></div>
+        <div><label class="lab">Nota (opcional)</label><input id="ab-nota" placeholder="Ej: cuota junio"></div>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:12px">
+        <button class="btn" onclick="abonar('${d.id}')">🎯 Abonar</button>
+        <button class="btn soft" onclick="abonoDeuda=null;render()">Cancelar</button></div></div>`
+    :`<button class="btn full" onclick="abonoDeuda='${d.id}';editDeuda=null;render()">💸 Registrar abono</button>`):''}
+    ${d.abonos.length?`<div style="margin-top:10px">${d.abonos.map(a=>`<div class="row">
       <div class="icobox" style="background:rgba(52,211,153,.13)">✅</div>
       <div class="rowmain"><div class="rowtitle num">${fmt(a.monto)}</div>
         <div class="rowsub">${a.fecha}${a.nota?' · '+esc(a.nota):''}</div></div>
-      <button class="del" onclick="delAbono('${a.id}')">🗑️</button></div>`).join('')}</div>`:''}`;
+      <button class="del" onclick="delAbono('${d.id}','${a.id}')">🗑️</button></div>`).join('')}</div>`:''}
+  </div>`}).join('')}
+
+  ${showNuevaDeuda?`<div class="card" style="border-color:var(--border2)">
+    <div class="h" style="margin-bottom:12px">➕ Nueva deuda</div>
+    <div class="grid g2">
+      <div style="grid-column:1/-1"><label class="lab">Nombre</label><input id="nd-nombre" placeholder="Ej: Tarjeta de crédito"></div>
+      <div><label class="lab">Saldo que debes</label><input data-monto id="nd-total" inputmode="numeric" placeholder="$5.000.000"></div>
+      <div><label class="lab">Cuota mensual (opcional)</label><input data-monto id="nd-cuota" inputmode="numeric" placeholder="$300.000"></div>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:12px">
+      <button class="btn" onclick="crearDeuda()">✓ Agregar deuda</button>
+      <button class="btn soft" onclick="showNuevaDeuda=false;render()">Cancelar</button></div>
+  </div>`
+  :`<button class="btn soft full" onclick="showNuevaDeuda=true;render()">➕ Agregar otra deuda</button>`}`;
 }
-function abonar(){
-  const monto=pmonto(document.getElementById('a-monto').value);
-  if(!monto)return;
-  const fecha=document.getElementById('a-fecha').value||hoy();
-  const nota=document.getElementById('a-nota').value.trim();
-  D.deuda.abonos.unshift({id:uid(),fecha,monto,nota});
-  D.cajitas.ahorro-=monto;
-  D.movimientos.unshift({id:uid(),fecha,tipo:'gasto',monto,categoria:'Abono deuda',cajita:'ahorro',nota:nota||'Abono al banco'});
+function saveDeuda(id){
+  const d=D.deudas.find(x=>x.id===id);if(!d)return;
+  d.nombre=document.getElementById('ed-nombre-'+id).value.trim()||d.nombre;
+  d.saldoInicial=pmonto(document.getElementById('ed-total-'+id).value);
+  d.cuota=pmonto(document.getElementById('ed-cuota-'+id).value);
+  editDeuda=null;save();render();
+}
+function crearDeuda(){
+  const nombre=document.getElementById('nd-nombre').value.trim();
+  const total=pmonto(document.getElementById('nd-total').value);
+  if(!nombre||!total)return;
+  D.deudas.push({id:uid(),nombre,saldoInicial:total,cuota:pmonto(document.getElementById('nd-cuota').value),abonos:[]});
+  showNuevaDeuda=false;save();render();
+}
+function eliminarDeuda(id){
+  const d=D.deudas.find(x=>x.id===id);if(!d)return;
+  if(!confirm('¿Eliminar la deuda "'+d.nombre+'" y su historial de abonos? Los saldos de las cajitas no cambian.'))return;
+  D.deudas=D.deudas.filter(x=>x.id!==id);
   save();render();
 }
-function delAbono(id){
-  const a=D.deuda.abonos.find(x=>x.id===id);
-  if(!a)return;
-  D.deuda.abonos=D.deuda.abonos.filter(x=>x.id!==id);
-  D.cajitas.ahorro+=a.monto;
+function abonar(deudaId){
+  const d=D.deudas.find(x=>x.id===deudaId);if(!d)return;
+  const monto=pmonto(document.getElementById('ab-monto').value);
+  if(!monto)return;
+  const fecha=document.getElementById('ab-fecha').value||hoy();
+  const nota=document.getElementById('ab-nota').value.trim();
+  const caj=document.getElementById('ab-caj').value;
+  d.abonos.unshift({id:uid(),fecha,monto,nota,cajita:caj});
+  if(caj in D.cajitas)D.cajitas[caj]-=monto;
+  D.movimientos.unshift({id:uid(),fecha,tipo:'gasto',monto,categoria:'Abono deuda',cajita:caj,nota:d.nombre+(nota?' · '+nota:'')});
+  abonoDeuda=null;save();render();
+}
+function delAbono(deudaId,abonoId){
+  const d=D.deudas.find(x=>x.id===deudaId);if(!d)return;
+  const a=d.abonos.find(x=>x.id===abonoId);if(!a)return;
+  d.abonos=d.abonos.filter(x=>x.id!==abonoId);
+  const caj=a.cajita||'ahorro';
+  if(caj in D.cajitas)D.cajitas[caj]+=a.monto;
   save();render();
 }
 
